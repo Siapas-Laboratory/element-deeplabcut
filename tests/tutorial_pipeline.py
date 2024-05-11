@@ -60,11 +60,14 @@ __all__ = ["lab", "subject", "session", "train", "model", "Device"]
 
 # Activate schemas -------------
 
-lab.activate(db_prefix + "lab")
-subject.activate(db_prefix + "subject", linking_module=__name__)
-Experimenter = lab.User
-Session = session.Session
-session.activate(db_prefix + "session", linking_module=__name__)
+# lab.activate(db_prefix + "lab")
+# subject.activate(db_prefix + "subject", linking_module=__name__)
+
+# Experimenter = lab.User
+acq = dj.create_virtual_module('acq', 'acq')
+Session = acq.HammerSessions
+Device = acq.Cameras
+# session.activate(db_prefix + "session", linking_module=__name__)
 
 
 @lab.schema
@@ -97,5 +100,5 @@ class Device(dj.Lookup):
 # Activate DeepLabCut schema -----------------------------------
 
 
-train.activate(db_prefix + "train", linking_module=__name__)
-model.activate(db_prefix + "model", linking_module=__name__)
+train.activate("dlc_train", linking_module=__name__)
+model.activate("dlc_model", linking_module=__name__)
