@@ -18,6 +18,7 @@ from typing import Optional
 from datetime import datetime
 from element_interface.utils import find_full_path, find_root_directory
 from .readers import dlc_reader
+import shutil
 
 schema = dj.schema()
 _linking_module = None
@@ -59,6 +60,10 @@ def activate(
     assert hasattr(
         linking_module, "get_dlc_root_data_dir"
     ), "The linking module must specify a lookup function for a root data directory"
+
+    assert hasattr(
+        linking_module, "get_dlc_root_model_dir"
+    ), "The linking module must specify a lookup function for a root model directory"
 
     global _linking_module
     _linking_module = linking_module
@@ -108,7 +113,8 @@ def get_dlc_processed_data_dir() -> Optional[str]:
     else:
         return None
 
-
+def get_dlc_root_model_dir() -> str:
+    return _linking_module.get_dlc_root_model_dir()
 # ----------------------------- Table declarations ----------------------
 
 
@@ -234,7 +240,7 @@ class BodyPart(dj.Lookup):
             verbose (bool): Default True. Print both existing and new items to console.
         """
         if not isinstance(dlc_config, dict):
-            dlc_config_fp = find_full_path(get_dlc_root_data_dir(), Path(dlc_config))
+            dlc_config_fp = find_full_path(get_dlc_root_model_dir(), Path(dlc_config))
             assert dlc_config_fp.exists() and dlc_config_fp.suffix in (
                 ".yml",
                 ".yaml",
@@ -348,6 +354,9 @@ class Model(dj.Manual):
         -> BodyPart
         """
 
+    # TODO: need to delete database managed model directory when
+    # removing a tuple
+
     @classmethod
     def insert_new_model(
         cls,
@@ -376,24 +385,30 @@ class Model(dj.Manual):
             params (dict): Optional. If dlc_config is path, dict of override items
         """
 
-        from deeplabcut.utils.auxiliaryfunctions import GetScorerName  # isort:skip
+        from deeplabcut.utils.auxiliaryfunctions import GetScorerName, write_config  # isort:skip
 
-        # handle dlc_config being a yaml file
-        dlc_config_fp = find_full_path(get_dlc_root_data_dir(), Path(dlc_config))
+        assert Path(dlc_config).suffix in (".yml", ".yaml"), "Config file was expexted to be a yaml file"
+
+        # copy frozen model directory to database managed directory
+        root_dir = get_dlc_root_model_dir()
+        project_path = Path(root_dir)/Path(dlc_config).parent.name
+        shutil.copytree(Path(dlc_config).parent, project_path)
+        dlc_config_fp = project_path/Path(dlc_config).name
+
         assert dlc_config_fp.exists(), (
             "dlc_config is not a filepath" + f"\n Check: {dlc_config_fp}"
         )
-        if dlc_config_fp.suffix in (".yml", ".yaml"):
-            yaml = YAML(typ="safe", pure=True)
-            with open(dlc_config_fp, "rb") as f:
-                dlc_config = yaml.load(f)
+
+        # handle dlc_config being a yaml file
+        yaml = YAML(typ="safe", pure=True)
+        with open(dlc_config_fp, "rb") as f:
+            dlc_config = yaml.load(f)
         if isinstance(params, dict):
             dlc_config.update(params)
 
         # ---- Get and resolve project path ----
-        project_path = dlc_config_fp.parent
         dlc_config["project_path"] = project_path.as_posix()  # update if different
-        root_dir = find_root_directory(get_dlc_root_data_dir(), project_path)
+        write_config(dlc_config_fp.as_posix(), dlc_config)
 
         # ---- Verify config ----
         needed_attributes = [
@@ -509,7 +524,7 @@ class ModelEvaluation(dj.Computed):
             "trainingsetindex",
         )
 
-        project_path = find_full_path(get_dlc_root_data_dir(), project_path)
+        project_path = find_full_path(get_dlc_root_model_dir(), project_path)
         yml_path, _ = dlc_reader.read_yaml(project_path)
 
         evaluate_network(

@@ -9,6 +9,8 @@ from element_deeplabcut import train, model
 from element_animal.subject import Subject
 from element_lab.lab import Source, Lab, Protocol, User, Project
 
+MODEL_DIR = os.path.join(os.getcwd(), "dlc_models")
+os.makedirs(MODEL_DIR, exist_ok= True)
 
 if "custom" not in dj.config:
     dj.config["custom"] = {}
@@ -56,18 +58,19 @@ def get_dlc_processed_data_dir() -> str:
         return None
 
 
+def get_dlc_root_model_dir() -> str:
+    """Returns a root directory for Element DeepLabCut to store frozen copies of models"""
+    return MODEL_DIR
+
 __all__ = ["lab", "subject", "session", "train", "model", "Device"]
 
 # Activate schemas -------------
 
-# lab.activate(db_prefix + "lab")
-# subject.activate(db_prefix + "subject", linking_module=__name__)
-
-# Experimenter = lab.User
-acq = dj.create_virtual_module('acq', 'acq')
-Session = acq.HammerSessions
-Device = acq.Cameras
-# session.activate(db_prefix + "session", linking_module=__name__)
+lab.activate(db_prefix + "lab")
+subject.activate(db_prefix + "subject", linking_module=__name__)
+Experimenter = lab.User
+Session = session.Session
+session.activate(db_prefix + "session", linking_module=__name__)
 
 
 @lab.schema
@@ -100,5 +103,5 @@ class Device(dj.Lookup):
 # Activate DeepLabCut schema -----------------------------------
 
 
-train.activate("dlc_train", linking_module=__name__)
-model.activate("dlc_model", linking_module=__name__)
+train.activate(db_prefix + "train", linking_module=__name__)
+model.activate(db_prefix + "model", linking_module=__name__)
