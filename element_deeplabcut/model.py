@@ -392,7 +392,7 @@ class Model(dj.Manual):
         # copy frozen model directory to database managed directory
         root_dir = get_dlc_root_model_dir()
         project_path = Path(root_dir)/Path(dlc_config).parent.name
-        shutil.copytree(Path(dlc_config).parent, project_path)
+        shutil.copytree(Path(dlc_config).parent, project_path, symlinks=True)
         dlc_config_fp = project_path/Path(dlc_config).name
 
         assert dlc_config_fp.exists(), (
