@@ -43,8 +43,7 @@ def activate(
 
     Dependencies:
     Upstream tables:
-        Session: A parent table to VideoRecording, identifying a recording session.
-        Equipment: A parent table to VideoRecording, identifying a recording device.
+        VideoRecording: a parent table to PoseEstimationTask identifying a video recording
     Functions:
         get_dlc_root_data_dir(): Returns absolute path for root data director(y/ies)
                                  with all behavioral recordings, as (list of) string(s).
@@ -64,6 +63,19 @@ def activate(
     assert hasattr(
         linking_module, "get_dlc_root_model_dir"
     ), "The linking module must specify a lookup function for a root model directory"
+
+    assert hasattr(
+        linking_module, "get_vid_paths"
+    ), "The linking module must specify a lookup function for a video path"
+
+    assert hasattr(
+        linking_module, "get_vid_devices"
+    ), "The linking module must specify a lookup function for a video devices"
+
+    assert hasattr(
+        linking_module, "VID_ID_ATTR"
+    ), "The linking module must specify the attribute of VideoRecordings which contains the identifier for the recording"
+
 
     global _linking_module
     _linking_module = linking_module
@@ -115,104 +127,14 @@ def get_dlc_processed_data_dir() -> Optional[str]:
 
 def get_dlc_root_model_dir() -> str:
     return _linking_module.get_dlc_root_model_dir()
+
+def get_vid_paths(key) -> list:
+    return _linking_module.get_vid_paths(key)
+
+def get_vid_devices(key) -> list:
+    return _linking_module.get_vid_devices(key)
+
 # ----------------------------- Table declarations ----------------------
-
-
-@schema
-class VideoRecording(dj.Manual):
-    """Set of video recordings for DLC inferences.
-
-    Attributes:
-        Session (foreign key): Session primary key.
-        recording_id (int): Unique recording ID.
-        Device (foreign key): Device table primary key, used for default output
-            directory path information.
-    """
-
-    definition = """
-    -> Session
-    recording_id: int
-    ---
-    -> Device
-    """
-
-    class File(dj.Part):
-        """File IDs and paths associated with a given recording_id
-
-        Attributes:
-            VideoRecording (foreign key): Video recording primary key.
-            file_path ( varchar(255) ): file path of video, relative to root data dir.
-        """
-
-        definition = """
-        -> master
-        file_id: int
-        ---
-        file_path: varchar(255)  # filepath of video, relative to root data directory
-        """
-
-
-@schema
-class RecordingInfo(dj.Imported):
-    """Automated table with video file metadata.
-
-    Attributes:
-        VideoRecording (foreign key): Video recording key.
-        px_height (smallint): Height in pixels.
-        px_width (smallint): Width in pixels.
-        nframes (int): Number of frames.
-        fps (int): Optional. Frames per second, Hz.
-        recording_datetime (datetime): Optional. Datetime for the start of recording.
-        recording_duration (float): video duration (s) from nframes / fps."""
-
-    definition = """
-    -> VideoRecording
-    ---
-    px_height                 : smallint  # height in pixels
-    px_width                  : smallint  # width in pixels
-    nframes                   : int  # number of frames 
-    fps = NULL                : int       # (Hz) frames per second
-    recording_datetime = NULL : datetime  # Datetime for the start of the recording
-    recording_duration        : float     # video duration (s) from nframes / fps
-    """
-
-    @property
-    def key_source(self):
-        """Defines order of keys for make function when called via `populate()`"""
-        return VideoRecording & VideoRecording.File
-
-    def make(self, key):
-        """Populates table with video metadata using CV2."""
-        file_paths = (VideoRecording.File & key).fetch("file_path")
-
-        nframes = 0
-        px_height, px_width, fps = None, None, None
-
-        for file_path in file_paths:
-            file_path = (find_full_path(get_dlc_root_data_dir(), file_path)).as_posix()
-
-            cap = cv2.VideoCapture(file_path)
-            info = (
-                int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)),
-                int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)),
-                int(cap.get(cv2.CAP_PROP_FPS)),
-            )
-            if px_height is not None:
-                assert (px_height, px_width, fps) == info
-            px_height, px_width, fps = info
-            nframes += int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-            cap.release()
-
-        self.insert1(
-            {
-                **key,
-                "px_height": px_height,
-                "px_width": px_width,
-                "nframes": nframes,
-                "fps": fps,
-                "recording_duration": nframes / fps,
-            }
-        )
 
 
 @schema
@@ -392,6 +314,8 @@ class Model(dj.Manual):
         # copy frozen model directory to database managed directory
         root_dir = get_dlc_root_model_dir()
         project_path = Path(root_dir)/Path(dlc_config).parent.name
+
+        # TODO: check if the project folder already exists and change name if so
         shutil.copytree(Path(dlc_config).parent, project_path, symlinks=True)
         dlc_config_fp = project_path/Path(dlc_config).name
 
@@ -599,16 +523,10 @@ class PoseEstimationTask(dj.Manual):
             relative (bool): Report directory relative to get_dlc_processed_data_dir().
             mkdir (bool): Default False. Make directory if it doesn't exist.
         """
-        video_filepath = find_full_path(
-            get_dlc_root_data_dir(),
-            (VideoRecording.File & key).fetch("file_path", limit=1)[0],
-        )
+        video_filepath = get_vid_paths(key)[0]
         root_dir = find_root_directory(get_dlc_root_data_dir(), video_filepath.parent)
-        recording_key = VideoRecording & key
-        device = "-".join(
-            str(v)
-            for v in (_linking_module.Device & recording_key).fetch1("KEY").values()
-        )
+        device = "-".join(get_vid_devices(key))
+
         if get_dlc_processed_data_dir():
             processed_dir = Path(get_dlc_processed_data_dir())
         else:  # if processed not provided, default to where video is
@@ -616,9 +534,8 @@ class PoseEstimationTask(dj.Manual):
 
         output_dir = (
             processed_dir
-            / video_filepath.parent.relative_to(root_dir)
             / (
-                f'device_{device}_recording_{key["recording_id"]}_model_'
+                f'device_{device}_recording_{key[_linking_module.VID_ID_ATTR]}_model_'
                 + key["model_name"].replace(" ", "-")
             )
         )
@@ -669,9 +586,7 @@ class PoseEstimationTask(dj.Manual):
                 "model_name": model_name,
                 "task_mode": task_mode,
                 "pose_estimation_params": analyze_videos_params,
-                "pose_estimation_output_dir": output_dir.relative_to(
-                    processed_dir
-                ).as_posix(),
+                "pose_estimation_output_dir": output_dir.as_posix(),
             }
         )
 
@@ -724,7 +639,6 @@ class PoseEstimation(dj.Computed):
             "task_mode", "pose_estimation_output_dir"
         )
 
-        output_dir = find_full_path(get_dlc_root_data_dir(), output_dir)
 
         # Triger PoseEstimation
         if task_mode == "trigger":
@@ -735,10 +649,7 @@ class PoseEstimation(dj.Computed):
             project_path = find_full_path(
                 get_dlc_root_data_dir(), dlc_model["project_path"]
             )
-            video_filepaths = [
-                find_full_path(get_dlc_root_data_dir(), fp).as_posix()
-                for fp in (VideoRecording.File & key).fetch("file_path")
-            ]
+            video_filepaths = get_vid_paths(key)
             analyze_video_params = (PoseEstimationTask & key).fetch1(
                 "pose_estimation_params"
             ) or {}
