@@ -278,6 +278,8 @@ class Model(dj.Manual):
 
     # TODO: need to delete database managed model directory when
     # removing a tuple
+        
+    #TODO: only copy relevant folders for specified iteration and shuffle
 
     @classmethod
     def insert_new_model(
@@ -524,7 +526,7 @@ class PoseEstimationTask(dj.Manual):
             mkdir (bool): Default False. Make directory if it doesn't exist.
         """
         video_filepath = get_vid_paths(key)[0]
-        root_dir = find_root_directory(get_dlc_root_data_dir(), video_filepath.parent)
+        root_dir = video_filepath.parent
         device = "-".join(get_vid_devices(key))
 
         if get_dlc_processed_data_dir():
@@ -647,7 +649,7 @@ class PoseEstimation(dj.Computed):
             # - video_filepaths: full paths to the video files for inference
             # - analyze_video_params: optional parameters to analyze video
             project_path = find_full_path(
-                get_dlc_root_data_dir(), dlc_model["project_path"]
+                get_dlc_root_model_dir(), dlc_model["project_path"]
             )
             video_filepaths = get_vid_paths(key)
             analyze_video_params = (PoseEstimationTask & key).fetch1(
