@@ -316,11 +316,30 @@ class Model(dj.Manual):
         # copy frozen model directory to database managed directory
         root_dir = get_dlc_root_model_dir()
         project_path = Path(root_dir)/Path(dlc_config).parent.name
+        version = 0
+        while project_path.exists():
+            version += 1
+            project_path = Path(root_dir)/(Path(dlc_config).parent.name + f"_v{version}")
+        os.mkdir(project_path)
 
-        # TODO: check if the project folder already exists and change name if so
-        shutil.copytree(Path(dlc_config).parent, project_path, symlinks=True)
+        yaml = YAML(typ="safe", pure=True)
+        with open(dlc_config, "rb") as f:
+            it = yaml.load(f)['iteration']
+
+        for i in Path(dlc_config).parent.iterdir():
+            print(f'copying {i}')
+            if i.is_dir():
+                if i.name in ['dlc-models', 'training-datasets']:
+                    os.mkdir(project_path/i.name)
+                    it_dir = f'iteration-{it}'
+                    if it_dir in [j.name for j in i.iterdir()]:
+                        shutil.copytree(i/it_dir, project_path/i.name/it_dir, symlinks=True)
+                else:
+                    shutil.copytree(i, project_path/i.name, symlinks=True)
+            elif i.is_file():
+                shutil.copyfile(i, project_path/i.name)
+        
         dlc_config_fp = project_path/Path(dlc_config).name
-
         assert dlc_config_fp.exists(), (
             "dlc_config is not a filepath" + f"\n Check: {dlc_config_fp}"
         )
@@ -567,7 +586,6 @@ class PoseEstimationTask(dj.Manual):
                 videotype, gputouse, save_as_csv, batchsize, cropping, TFGPUinference,
                 dynamic, robust_nframes, allow_growth, use_shelve
         """
-        processed_dir = get_dlc_processed_data_dir()
         output_dir = cls.infer_output_dir(
             {**video_recording_key, "model_name": model_name},
             relative=False,
