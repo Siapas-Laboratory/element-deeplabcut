@@ -247,10 +247,17 @@ class Model(dj.Manual):
         -> BodyPart
         """
 
-    # TODO: need to delete database managed model directory when
-    # removing a tuple
-        
-    #TODO: only copy relevant folders for specified iteration and shuffle
+    def delete(self, **kwargs):
+        root_dir = Path(get_dlc_root_model_dir())
+        for model_name, path in zip(*self.fetch('model_name', 'project_path')):
+            full_path = root_dir/path
+            reply = input(f"Are you sure you want to delete {model_name} at {full_path.as_posix()}? [y/n]: ")
+            if reply.lower()[0] == 'y':
+                row = Model & {'model_name': model_name}
+                del_count = super(Model, row).delete()
+                if del_count == 1:
+                    print(f'successfully deleted {model_name}, deleting associated project directory')
+                    shutil.rmtree(full_path)
 
     @classmethod
     def insert_new_model(
