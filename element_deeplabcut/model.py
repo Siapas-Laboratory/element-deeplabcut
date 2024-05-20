@@ -749,7 +749,7 @@ class PoseEstimation(dj.Computed):
                 video_filepaths,
                 dlc_model,
                 project_path,
-                output_dir,
+                Path(output_dir),
                 **analyze_video_params,
             )
 
