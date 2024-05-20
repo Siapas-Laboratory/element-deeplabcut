@@ -753,7 +753,7 @@ class PoseEstimation(dj.Computed):
                 **analyze_video_params,
             )
 
-        dlc_result = dlc_reader.PoseEstimation(output_dir.as_posix())
+        dlc_result = dlc_reader.PoseEstimation(output_dir)
         creation_time = datetime.fromtimestamp(dlc_result.creation_time).strftime(
             "%Y-%m-%d %H:%M:%S"
         )
