@@ -739,7 +739,7 @@ class PoseEstimation(dj.Computed):
             project_path = find_full_path(
                 get_dlc_root_model_dir(), dlc_model["project_path"]
             )
-            video_filepaths = get_vid_paths(key)
+            video_filepaths = [file.as_posix() for file in get_vid_paths(key)]
             analyze_video_params = (PoseEstimationTask & key).fetch1(
                 "pose_estimation_params"
             ) or {}
@@ -753,7 +753,7 @@ class PoseEstimation(dj.Computed):
                 **analyze_video_params,
             )
 
-        dlc_result = dlc_reader.PoseEstimation(output_dir)
+        dlc_result = dlc_reader.PoseEstimation(output_dir.as_posix())
         creation_time = datetime.fromtimestamp(dlc_result.creation_time).strftime(
             "%Y-%m-%d %H:%M:%S"
         )
