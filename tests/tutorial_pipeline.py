@@ -13,8 +13,6 @@ from element_lab.lab import Source, Lab, Protocol, User, Project
 MODEL_DIR = os.path.join(os.getcwd(), "dlc_models")
 os.makedirs(MODEL_DIR, exist_ok= True)
 
-VID_ID_ATTR = "recording_id"
-
 if "custom" not in dj.config:
     dj.config["custom"] = {}
 
@@ -109,106 +107,10 @@ train.activate(db_prefix + "train", linking_module=__name__)
 model.activate(db_prefix + "model", linking_module=__name__)
 
 
-@model.schema
-class VideoRecording(dj.Manual):
-    """Set of video recordings for DLC inferences.
-
-    Attributes:
-        Session (foreign key): Session primary key.
-        recording_id (int): Unique recording ID.
-        Device (foreign key): Device table primary key, used for default output
-            directory path information.
-    """
-
-    definition = """
-    -> Session
-    recording_id: int
-    ---
-    -> Device
-    """
-
-    class File(dj.Part):
-        """File IDs and paths associated with a given recording_id
-
-        Attributes:
-            VideoRecording (foreign key): Video recording primary key.
-            file_path ( varchar(255) ): file path of video, relative to root data dir.
-        """
-
-        definition = """
-        -> master
-        file_id: int
-        ---
-        file_path: varchar(255)  # filepath of video, relative to root data directory
-        """
-
-
-@model.schema
-class RecordingInfo(dj.Imported):
-    """Automated table with video file metadata.
-
-    Attributes:
-        VideoRecording (foreign key): Video recording key.
-        px_height (smallint): Height in pixels.
-        px_width (smallint): Width in pixels.
-        nframes (int): Number of frames.
-        fps (int): Optional. Frames per second, Hz.
-        recording_datetime (datetime): Optional. Datetime for the start of recording.
-        recording_duration (float): video duration (s) from nframes / fps."""
-
-    definition = """
-    -> VideoRecording
-    ---
-    px_height                 : smallint  # height in pixels
-    px_width                  : smallint  # width in pixels
-    nframes                   : int  # number of frames 
-    fps = NULL                : int       # (Hz) frames per second
-    recording_datetime = NULL : datetime  # Datetime for the start of the recording
-    recording_duration        : float     # video duration (s) from nframes / fps
-    """
-
-    @property
-    def key_source(self):
-        """Defines order of keys for make function when called via `populate()`"""
-        return VideoRecording & VideoRecording.File
-
-    def make(self, key):
-        """Populates table with video metadata using CV2."""
-        file_paths = (VideoRecording.File & key).fetch("file_path")
-
-        nframes = 0
-        px_height, px_width, fps = None, None, None
-
-        for file_path in file_paths:
-            file_path = (find_full_path(get_dlc_root_data_dir(), file_path)).as_posix()
-
-            cap = cv2.VideoCapture(file_path)
-            info = (
-                int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)),
-                int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)),
-                int(cap.get(cv2.CAP_PROP_FPS)),
-            )
-            if px_height is not None:
-                assert (px_height, px_width, fps) == info
-            px_height, px_width, fps = info
-            nframes += int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-            cap.release()
-
-        self.insert1(
-            {
-                **key,
-                "px_height": px_height,
-                "px_width": px_width,
-                "nframes": nframes,
-                "fps": fps,
-                "recording_duration": nframes / fps,
-            }
-        )
-
 def get_vid_paths(key) -> list:
-    files = (VideoRecording.File & key).fetch("file_path")
+    files = (model.VideoRecording.File & key).fetch("file_path")
     return [find_full_path(get_dlc_root_data_dir(), f) for f in files]
 
 def get_vid_devices(key) -> list:
-    recording_key = VideoRecording & key
+    recording_key = model.VideoRecording & key
     return [str(v) for v in (Device & recording_key).fetch1("KEY").values()]

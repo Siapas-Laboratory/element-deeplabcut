@@ -7,7 +7,6 @@ import pickle
 from ruamel.yaml import YAML
 from element_interface.utils import find_root_directory, dict_to_uuid
 from .. import model
-from ..model import get_dlc_root_data_dir
 from datajoint.errors import DataJointError
 
 logger = logging.getLogger("datajoint")

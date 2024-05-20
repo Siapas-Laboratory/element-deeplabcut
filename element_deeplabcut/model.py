@@ -45,8 +45,12 @@ def activate(
     Upstream tables:
         VideoRecording: a parent table to PoseEstimationTask identifying a video recording
     Functions:
-        get_dlc_root_data_dir(): Returns absolute path for root data director(y/ies)
-                                 with all behavioral recordings, as (list of) string(s).
+        get_dlc_root_model_dir(): Returns absolute path for root directory
+                                  for copying frozen models to.
+        get_vid_paths(): returns a list of absolute paths to videos associated to
+                         a VideoRecording or VideoRecording.File
+        get_vid_devices(): returns a list of devices associated to files in a given video
+                            recording
         get_dlc_processed_data_dir(): Optional. Returns absolute path for processed
                                       data. Defaults to session video subfolder.
     """
@@ -57,25 +61,14 @@ def activate(
         linking_module
     ), "The argument 'dependency' must be a module's name or a module"
     assert hasattr(
-        linking_module, "get_dlc_root_data_dir"
-    ), "The linking module must specify a lookup function for a root data directory"
-
-    assert hasattr(
         linking_module, "get_dlc_root_model_dir"
     ), "The linking module must specify a lookup function for a root model directory"
-
     assert hasattr(
         linking_module, "get_vid_paths"
     ), "The linking module must specify a lookup function for a video path"
-
     assert hasattr(
         linking_module, "get_vid_devices"
     ), "The linking module must specify a lookup function for a video devices"
-
-    assert hasattr(
-        linking_module, "VID_ID_ATTR"
-    ), "The linking module must specify the attribute of VideoRecordings which contains the identifier for the recording"
-
 
     global _linking_module
     _linking_module = linking_module
@@ -90,28 +83,6 @@ def activate(
 
 
 # -------------- Functions required by element-deeplabcut ---------------
-
-
-def get_dlc_root_data_dir() -> list:
-    """Pulls relevant func from parent namespace to specify root data dir(s).
-
-    It is recommended that all paths in DataJoint Elements stored as relative
-    paths, with respect to some user-configured "root" director(y/ies). The
-    root(s) may vary between data modalities and user machines. Returns a full path
-    string or list of strings for possible root data directories.
-    """
-    root_directories = _linking_module.get_dlc_root_data_dir()
-    if isinstance(root_directories, (str, Path)):
-        root_directories = [root_directories]
-
-    if (
-        hasattr(_linking_module, "get_dlc_processed_data_dir")
-        and get_dlc_processed_data_dir() not in root_directories
-    ):
-        root_directories.append(_linking_module.get_dlc_processed_data_dir())
-
-    return root_directories
-
 
 def get_dlc_processed_data_dir() -> Optional[str]:
     """Pulls relevant func from parent namespace. Defaults to DLC's project /videos/.
@@ -509,6 +480,99 @@ class ModelEvaluation(dj.Computed):
             )
         )
 
+@schema
+class VideoRecording(dj.Manual):
+    """Set of video recordings for DLC inferences.
+
+    Attributes:
+        Session (foreign key): Session primary key.
+        recording_id (int): Unique recording ID.
+        Device (foreign key): Device table primary key, used for default output
+            directory path information.
+    """
+
+    definition = """
+    -> Session
+    recording_id: int
+    ---
+    """
+
+    class File(dj.Part):
+        """File IDs and paths associated with a given recording_id
+
+        Attributes:
+            VideoRecording (foreign key): Video recording primary key.
+            file_path ( varchar(255) ): file path of video, relative to root data dir.
+        """
+
+        definition = """
+        -> master
+        -> Video
+        ---
+        """
+
+@schema
+class RecordingInfo(dj.Imported):
+    """Automated table with video file metadata.
+
+    Attributes:
+        VideoRecording (foreign key): Video recording key.
+        px_height (smallint): Height in pixels.
+        px_width (smallint): Width in pixels.
+        nframes (int): Number of frames.
+        fps (int): Optional. Frames per second, Hz.
+        recording_datetime (datetime): Optional. Datetime for the start of recording.
+        recording_duration (float): video duration (s) from nframes / fps."""
+
+    definition = """
+    -> VideoRecording
+    ---
+    px_height                 : smallint  # height in pixels
+    px_width                  : smallint  # width in pixels
+    nframes                   : int  # number of frames 
+    fps = NULL                : int       # (Hz) frames per second
+    recording_datetime = NULL : datetime  # Datetime for the start of the recording
+    recording_duration        : float     # video duration (s) from nframes / fps
+    """
+
+    @property
+    def key_source(self):
+        """Defines order of keys for make function when called via `populate()`"""
+        return VideoRecording & VideoRecording.File
+
+    def make(self, key):
+        """Populates table with video metadata using CV2."""
+        file_paths = get_vid_paths(key)
+
+        nframes = 0
+        px_height, px_width, fps = None, None, None
+
+        for file_path in file_paths:
+            file_path = file_path.as_posix()
+
+            cap = cv2.VideoCapture(file_path)
+            info = (
+                int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)),
+                int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)),
+                int(cap.get(cv2.CAP_PROP_FPS)),
+            )
+            if px_height is not None:
+                assert (px_height, px_width, fps) == info
+            px_height, px_width, fps = info
+            nframes += int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+            cap.release()
+
+        self.insert1(
+            {
+                **key,
+                "px_height": px_height,
+                "px_width": px_width,
+                "nframes": nframes,
+                "fps": fps,
+                "recording_duration": nframes / fps,
+            }
+        )
+
 
 @schema
 class PoseEstimationTask(dj.Manual):
@@ -518,8 +582,7 @@ class PoseEstimationTask(dj.Manual):
         VideoRecording (foreign key): Video recording key.
         Model (foreign key): Model name.
         task_mode (load or trigger): Optional. Default load. Or trigger computation.
-        pose_estimation_output_dir ( varchar(255) ): Optional. Output dir relative to
-                                                     get_dlc_root_data_dir.
+        pose_estimation_output_dir ( varchar(255) ): Optional. Output dir
         pose_estimation_params (longblob): Optional. Params for DLC's analyze_videos
                                            params, if not default."""
 
@@ -528,7 +591,7 @@ class PoseEstimationTask(dj.Manual):
     -> Model                                    # Must specify a DLC project_path
     ---
     task_mode='load' : enum('load', 'trigger')  # load results or trigger computation
-    pose_estimation_output_dir='': varchar(255) # output dir relative to the root dir
+    pose_estimation_output_dir='': varchar(255) # output dir
     pose_estimation_params=null  : longblob     # analyze_videos params, if not default
     """
 
@@ -556,7 +619,7 @@ class PoseEstimationTask(dj.Manual):
         output_dir = (
             processed_dir
             / (
-                f'device_{device}_recording_{key[_linking_module.VID_ID_ATTR]}_model_'
+                f'device_{device}_recording_{key["recording_id"]}_model_'
                 + key["model_name"].replace(" ", "-")
             )
         )
