@@ -351,7 +351,7 @@ def do_pose_estimation(
 
     # ---- Write config files ----
     # To output dir: Important for loading/parsing output in datajoint
-    _ = save_yaml(output_dir, dlc_config)
+    _ = save_yaml(Path(output_dir), dlc_config)
     # To project dir: Required by DLC to run the analyze_videos
     if dlc_project_path != output_dir:
         config_filepath = save_yaml(dlc_project_path, dlc_config)
