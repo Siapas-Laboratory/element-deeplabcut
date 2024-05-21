@@ -112,7 +112,6 @@ class VideoRecording(dj.Manual):
 
     definition = """
     -> Session
-    -> Device
     recording_id: int
     ---
     """
@@ -127,7 +126,7 @@ class VideoRecording(dj.Manual):
 
         definition = """
         -> master
-        file_id: int
+        -> Device
         ---
         -> Video
         """
@@ -610,10 +609,11 @@ class PoseEstimationTask(dj.Manual):
         """
         video_filepath = get_vid_paths(key)[0]
         root_dir = video_filepath.parent
-        recording_key = VideoRecording & key
+        recording_key = VideoRecording.File & key
         device = "-".join(
-            str(v)
-            for v in (_linking_module.Device & recording_key).fetch1("KEY").values()
+            str(j)
+            for i in (_linking_module.Device & recording_key).fetch("KEY")
+            for j in i.values()
         )
 
         if get_dlc_processed_data_dir():
