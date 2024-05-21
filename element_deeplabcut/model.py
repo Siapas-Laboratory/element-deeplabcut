@@ -49,8 +49,6 @@ def activate(
                                   for copying frozen models to.
         get_vid_paths(): returns a list of absolute paths to videos associated to
                          a VideoRecording or VideoRecording.File
-        get_vid_devices(): returns a list of devices associated to files in a given video
-                            recording
         get_dlc_processed_data_dir(): Optional. Returns absolute path for processed
                                       data. Defaults to session video subfolder.
     """
@@ -66,9 +64,6 @@ def activate(
     assert hasattr(
         linking_module, "get_vid_paths"
     ), "The linking module must specify a lookup function for a video path"
-    assert hasattr(
-        linking_module, "get_vid_devices"
-    ), "The linking module must specify a lookup function for a video devices"
 
     global _linking_module
     _linking_module = linking_module
@@ -102,12 +97,104 @@ def get_dlc_root_model_dir() -> str:
 def get_vid_paths(key) -> list:
     return _linking_module.get_vid_paths(key)
 
-def get_vid_devices(key) -> list:
-    return _linking_module.get_vid_devices(key)
-
 # ----------------------------- Table declarations ----------------------
 
+@schema
+class VideoRecording(dj.Manual):
+    """Set of video recordings for DLC inferences.
 
+    Attributes:
+        Session (foreign key): Session primary key.
+        recording_id (int): Unique recording ID.
+        Device (foreign key): Device table primary key, used for default output
+            directory path information.
+    """
+
+    definition = """
+    -> Session
+    -> Device
+    recording_id: int
+    ---
+    """
+
+    class File(dj.Part):
+        """File IDs and paths associated with a given recording_id
+
+        Attributes:
+            VideoRecording (foreign key): Video recording primary key.
+            file_path ( varchar(255) ): file path of video, relative to root data dir.
+        """
+
+        definition = """
+        -> master
+        file_id: int
+        ---
+        -> Video
+        """
+
+@schema
+class RecordingInfo(dj.Imported):
+    """Automated table with video file metadata.
+
+    Attributes:
+        VideoRecording (foreign key): Video recording key.
+        px_height (smallint): Height in pixels.
+        px_width (smallint): Width in pixels.
+        nframes (int): Number of frames.
+        fps (int): Optional. Frames per second, Hz.
+        recording_datetime (datetime): Optional. Datetime for the start of recording.
+        recording_duration (float): video duration (s) from nframes / fps."""
+
+    definition = """
+    -> VideoRecording
+    ---
+    px_height                 : smallint  # height in pixels
+    px_width                  : smallint  # width in pixels
+    nframes                   : int  # number of frames 
+    fps = NULL                : int       # (Hz) frames per second
+    recording_datetime = NULL : datetime  # Datetime for the start of the recording
+    recording_duration        : float     # video duration (s) from nframes / fps
+    """
+
+    @property
+    def key_source(self):
+        """Defines order of keys for make function when called via `populate()`"""
+        return VideoRecording & VideoRecording.File
+
+    def make(self, key):
+        """Populates table with video metadata using CV2."""
+        file_paths = get_vid_paths(key)
+
+        nframes = 0
+        px_height, px_width, fps = None, None, None
+
+        for file_path in file_paths:
+            file_path = file_path.as_posix()
+
+            cap = cv2.VideoCapture(file_path)
+            info = (
+                int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)),
+                int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)),
+                int(cap.get(cv2.CAP_PROP_FPS)),
+            )
+            if px_height is not None:
+                assert (px_height, px_width, fps) == info
+            px_height, px_width, fps = info
+            nframes += int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+            cap.release()
+
+        self.insert1(
+            {
+                **key,
+                "px_height": px_height,
+                "px_width": px_width,
+                "nframes": nframes,
+                "fps": fps,
+                "recording_duration": nframes / fps,
+            }
+        )
+
+        
 @schema
 class BodyPart(dj.Lookup):
     """Body parts tracked by DeepLabCut models
@@ -487,99 +574,6 @@ class ModelEvaluation(dj.Computed):
             )
         )
 
-@schema
-class VideoRecording(dj.Manual):
-    """Set of video recordings for DLC inferences.
-
-    Attributes:
-        Session (foreign key): Session primary key.
-        recording_id (int): Unique recording ID.
-        Device (foreign key): Device table primary key, used for default output
-            directory path information.
-    """
-
-    definition = """
-    -> Session
-    recording_id: int
-    ---
-    """
-
-    class File(dj.Part):
-        """File IDs and paths associated with a given recording_id
-
-        Attributes:
-            VideoRecording (foreign key): Video recording primary key.
-            file_path ( varchar(255) ): file path of video, relative to root data dir.
-        """
-
-        definition = """
-        -> master
-        -> Video
-        ---
-        """
-
-@schema
-class RecordingInfo(dj.Imported):
-    """Automated table with video file metadata.
-
-    Attributes:
-        VideoRecording (foreign key): Video recording key.
-        px_height (smallint): Height in pixels.
-        px_width (smallint): Width in pixels.
-        nframes (int): Number of frames.
-        fps (int): Optional. Frames per second, Hz.
-        recording_datetime (datetime): Optional. Datetime for the start of recording.
-        recording_duration (float): video duration (s) from nframes / fps."""
-
-    definition = """
-    -> VideoRecording
-    ---
-    px_height                 : smallint  # height in pixels
-    px_width                  : smallint  # width in pixels
-    nframes                   : int  # number of frames 
-    fps = NULL                : int       # (Hz) frames per second
-    recording_datetime = NULL : datetime  # Datetime for the start of the recording
-    recording_duration        : float     # video duration (s) from nframes / fps
-    """
-
-    @property
-    def key_source(self):
-        """Defines order of keys for make function when called via `populate()`"""
-        return VideoRecording & VideoRecording.File
-
-    def make(self, key):
-        """Populates table with video metadata using CV2."""
-        file_paths = get_vid_paths(key)
-
-        nframes = 0
-        px_height, px_width, fps = None, None, None
-
-        for file_path in file_paths:
-            file_path = file_path.as_posix()
-
-            cap = cv2.VideoCapture(file_path)
-            info = (
-                int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)),
-                int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)),
-                int(cap.get(cv2.CAP_PROP_FPS)),
-            )
-            if px_height is not None:
-                assert (px_height, px_width, fps) == info
-            px_height, px_width, fps = info
-            nframes += int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-            cap.release()
-
-        self.insert1(
-            {
-                **key,
-                "px_height": px_height,
-                "px_width": px_width,
-                "nframes": nframes,
-                "fps": fps,
-                "recording_duration": nframes / fps,
-            }
-        )
-
 
 @schema
 class PoseEstimationTask(dj.Manual):
@@ -616,7 +610,11 @@ class PoseEstimationTask(dj.Manual):
         """
         video_filepath = get_vid_paths(key)[0]
         root_dir = video_filepath.parent
-        device = "-".join(get_vid_devices(key))
+        recording_key = VideoRecording & key
+        device = "-".join(
+            str(v)
+            for v in (_linking_module.Device & recording_key).fetch1("KEY").values()
+        )
 
         if get_dlc_processed_data_dir():
             processed_dir = Path(get_dlc_processed_data_dir())
@@ -626,7 +624,7 @@ class PoseEstimationTask(dj.Manual):
         output_dir = (
             processed_dir
             / (
-                f'device_{device}_recording_{key["recording_id"]}_model_'
+                f'device_{device}_session_{key[_linking_module.Session.primary_key[0]]}_recording_{key["recording_id"]}_model_'
                 + key["model_name"].replace(" ", "-")
             )
         )
