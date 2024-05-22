@@ -804,7 +804,7 @@ class PoseEstimation(dj.Computed):
         df = None
         for body_part in body_parts:
             x_pos, y_pos, z_pos, likelihood = (
-                cls.BodyPartPosition & {"body_part": body_part}
+                cls.BodyPartPosition & {**key, "body_part": body_part}
             ).fetch1("x_pos", "y_pos", "z_pos", "likelihood")
             if not z_pos:
                 z_pos = np.zeros_like(x_pos)
