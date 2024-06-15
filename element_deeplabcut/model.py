@@ -116,6 +116,7 @@ class VideoRecording(dj.Manual):
     recording_id: int
     -> Device
     ---
+    good_frames = NULL : longblob # array where each row specifies a range of indices corresponding to valid frames
     """
 
     def get_vid_paths(self):
@@ -312,6 +313,7 @@ class Model(dj.Manual):
 
     definition = """
     model_name           : varchar(64)  # User-friendly model name
+    version              : int          # version of the frozen model
     ---
     task                 : varchar(32)  # Task in the config yaml
     date                 : varchar(16)  # Date in the config yaml
@@ -343,14 +345,14 @@ class Model(dj.Manual):
 
     def delete(self, **kwargs):
         root_dir = Path(get_dlc_root_model_dir())
-        for model_name, path in zip(*self.fetch('model_name', 'project_path')):
+        for model_name, v, path in zip(*self.fetch('model_name', 'version', 'project_path')):
             full_path = root_dir/path
-            reply = input(f"Are you sure you want to delete {model_name} at {full_path.as_posix()}? [y/n]: ")
+            reply = input(f"Are you sure you want to delete {model_name} version {v} at {full_path.as_posix()}? [y/n]: ")
             if reply.lower()[0] == 'y':
-                row = Model & {'model_name': model_name}
+                row = Model & {'model_name': model_name, 'version': v}
                 del_count = super(Model, row).delete()
                 if del_count == 1:
-                    print(f'successfully deleted {model_name}, deleting associated project directory')
+                    print(f'successfully deleted {model_name} version {v}, deleting associated project directory')
                     shutil.rmtree(full_path)
 
     @classmethod
@@ -387,11 +389,11 @@ class Model(dj.Manual):
 
         # copy frozen model directory to database managed directory
         root_dir = get_dlc_root_model_dir()
-        project_path = Path(root_dir)/Path(dlc_config).parent.name
+        project_path = Path(root_dir)/model_name
         version = 0
         while project_path.exists():
             version += 1
-            project_path = Path(root_dir)/(Path(dlc_config).parent.name + f"_v{version}")
+            project_path = Path(root_dir)/f"{model_name}_v{version}"
         os.mkdir(project_path)
 
         yaml = YAML(typ="safe", pure=True)
@@ -454,6 +456,7 @@ class Model(dj.Manual):
         # ---- Insert ----
         model_dict = {
             "model_name": model_name,
+            "version": version,
             "model_description": model_description,
             "scorer": dlc_scorer,
             "task": dlc_config["Task"],
@@ -490,7 +493,7 @@ class Model(dj.Manual):
             # Returns array, so check size for unambiguous truth value
             if BodyPart.extract_new_body_parts(dlc_config, verbose=False).size > 0:
                 BodyPart.insert_from_config(dlc_config, prompt=prompt)
-            cls.BodyPart.insert((model_name, bp) for bp in dlc_config["bodyparts"])
+            cls.BodyPart.insert((model_name, version, bp) for bp in dlc_config["bodyparts"])
 
         # ____ Insert into table ----
         if cls.connection.in_transaction:
@@ -498,6 +501,8 @@ class Model(dj.Manual):
         else:
             with cls.connection.transaction:
                 _do_insert()
+
+        return {'model_name': model_name, 'version': version}
 
 
 @schema
@@ -634,7 +639,8 @@ class PoseEstimationTask(dj.Manual):
                 f'device_{device}_'
                 + f'session_{key[_linking_module.Session.primary_key[0]]}_'
                 + f'recording_{key["recording_id"]}_model_'
-                + key["model_name"].replace(" ", "-")
+                + f'{key["model_name"].replace(" ", "-")}_'
+                + f'version_{key["version"]}'
             )
         )
         if mkdir:
@@ -646,6 +652,7 @@ class PoseEstimationTask(dj.Manual):
         cls,
         video_recording_key: dict,
         model_name: str,
+        version: int,
         *,
         task_mode: str = None,
         analyze_videos_params: dict = None,
@@ -664,7 +671,7 @@ class PoseEstimationTask(dj.Manual):
                 dynamic, robust_nframes, allow_growth, use_shelve
         """
         output_dir = cls.infer_output_dir(
-            {**video_recording_key, "model_name": model_name},
+            {**video_recording_key, "model_name": model_name, "version": version},
             relative=False,
             mkdir=True,
         )
@@ -681,6 +688,7 @@ class PoseEstimationTask(dj.Manual):
             {
                 **video_recording_key,
                 "model_name": model_name,
+                "version": version,
                 "task_mode": task_mode,
                 "pose_estimation_params": analyze_videos_params,
                 "pose_estimation_output_dir": output_dir.as_posix(),
@@ -705,28 +713,28 @@ class PoseEstimation(dj.Computed):
     pose_estimation_time: datetime  # time of generation of this set of DLC results
     """
 
-    class BodyPartPosition(dj.Part):
-        """Position of individual body parts by frame index
+    # class BodyPartPosition(dj.Part):
+    #     """Position of individual body parts by frame index
 
-        Attributes:
-            PoseEstimation (foreign key): Pose Estimation key.
-            Model.BodyPart (foreign key): Body Part key.
-            frame_index (longblob): Frame index in model.
-            x_pos (longblob): X position.
-            y_pos (longblob): Y position.
-            z_pos (longblob): Optional. Z position.
-            likelihood (longblob): Model confidence."""
+    #     Attributes:
+    #         PoseEstimation (foreign key): Pose Estimation key.
+    #         Model.BodyPart (foreign key): Body Part key.
+    #         frame_index (longblob): Frame index in model.
+    #         x_pos (longblob): X position.
+    #         y_pos (longblob): Y position.
+    #         z_pos (longblob): Optional. Z position.
+    #         likelihood (longblob): Model confidence."""
 
-        definition = """ # uses DeepLabCut h5 output for body part position
-        -> master
-        -> Model.BodyPart
-        ---
-        frame_index : longblob     # frame index in model
-        x_pos       : longblob
-        y_pos       : longblob
-        z_pos=null  : longblob
-        likelihood  : longblob
-        """
+    #     definition = """ # uses DeepLabCut h5 output for body part position
+    #     -> master
+    #     -> Model.BodyPart
+    #     ---
+    #     frame_index : longblob     # frame index in model
+    #     x_pos       : longblob
+    #     y_pos       : longblob
+    #     z_pos=null  : longblob
+    #     likelihood  : longblob
+    #     """
 
     def make(self, key):
         """.populate() method will launch training for each PoseEstimationTask"""
@@ -765,59 +773,59 @@ class PoseEstimation(dj.Computed):
             "%Y-%m-%d %H:%M:%S"
         )
 
-        body_parts = [
-            {
-                **key,
-                "body_part": k,
-                "frame_index": np.arange(dlc_result.nframes),
-                "x_pos": v["x"],
-                "y_pos": v["y"],
-                "z_pos": v.get("z"),
-                "likelihood": v["likelihood"],
-            }
-            for k, v in dlc_result.data.items()
-        ]
+        # body_parts = [
+        #     {
+        #         **key,
+        #         "body_part": k,
+        #         "frame_index": np.arange(dlc_result.nframes),
+        #         "x_pos": v["x"],
+        #         "y_pos": v["y"],
+        #         "z_pos": v.get("z"),
+        #         "likelihood": v["likelihood"],
+        #     }
+        #     for k, v in dlc_result.data.items()
+        # ]
 
         self.insert1({**key, "pose_estimation_time": creation_time})
-        self.BodyPartPosition.insert(body_parts)
+        # self.BodyPartPosition.insert(body_parts)
 
-    @classmethod
-    def get_trajectory(cls, key: dict, body_parts: list = "all") -> pd.DataFrame:
-        """Returns a pandas dataframe of coordinates of the specified body_part(s)
+    # @classmethod
+    # def get_trajectory(cls, key: dict, body_parts: list = "all") -> pd.DataFrame:
+    #     """Returns a pandas dataframe of coordinates of the specified body_part(s)
 
-        Args:
-            key (dict): A DataJoint query specifying one PoseEstimation entry.
-            body_parts (list, optional): Body parts as a list. If "all", all joints
+    #     Args:
+    #         key (dict): A DataJoint query specifying one PoseEstimation entry.
+    #         body_parts (list, optional): Body parts as a list. If "all", all joints
 
-        Returns:
-            df: multi index pandas dataframe with DLC scorer names, body_parts
-                and x/y coordinates of each joint name for a camera_id, similar to
-                 output of DLC dataframe. If 2D, z is set of zeros
-        """
-        model_name = key["model_name"]
+    #     Returns:
+    #         df: multi index pandas dataframe with DLC scorer names, body_parts
+    #             and x/y coordinates of each joint name for a camera_id, similar to
+    #              output of DLC dataframe. If 2D, z is set of zeros
+    #     """
+    #     model_name = key["model_name"]
 
-        if body_parts == "all":
-            body_parts = (cls.BodyPartPosition & key).fetch("body_part")
-        elif not isinstance(body_parts, list):
-            body_parts = list(body_parts)
+    #     if body_parts == "all":
+    #         body_parts = (cls.BodyPartPosition & key).fetch("body_part")
+    #     elif not isinstance(body_parts, list):
+    #         body_parts = list(body_parts)
 
-        df = None
-        for body_part in body_parts:
-            x_pos, y_pos, z_pos, likelihood = (
-                cls.BodyPartPosition & {**key, "body_part": body_part}
-            ).fetch1("x_pos", "y_pos", "z_pos", "likelihood")
-            if not z_pos:
-                z_pos = np.zeros_like(x_pos)
+    #     df = None
+    #     for body_part in body_parts:
+    #         x_pos, y_pos, z_pos, likelihood = (
+    #             cls.BodyPartPosition & {**key, "body_part": body_part}
+    #         ).fetch1("x_pos", "y_pos", "z_pos", "likelihood")
+    #         if not z_pos:
+    #             z_pos = np.zeros_like(x_pos)
 
-            a = np.vstack((x_pos, y_pos, z_pos, likelihood))
-            a = a.T
-            pdindex = pd.MultiIndex.from_product(
-                [[model_name], [body_part], ["x", "y", "z", "likelihood"]],
-                names=["scorer", "bodyparts", "coords"],
-            )
-            frame = pd.DataFrame(a, columns=pdindex, index=range(0, a.shape[0]))
-            df = pd.concat([df, frame], axis=1)
-        return df
+    #         a = np.vstack((x_pos, y_pos, z_pos, likelihood))
+    #         a = a.T
+    #         pdindex = pd.MultiIndex.from_product(
+    #             [[model_name], [body_part], ["x", "y", "z", "likelihood"]],
+    #             names=["scorer", "bodyparts", "coords"],
+    #         )
+    #         frame = pd.DataFrame(a, columns=pdindex, index=range(0, a.shape[0]))
+    #         df = pd.concat([df, frame], axis=1)
+    #     return df
 
 
 def str_to_bool(value) -> bool:
