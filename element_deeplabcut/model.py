@@ -321,7 +321,6 @@ class Model(dj.Manual):
     snapshotindex        : int          # which snapshot for prediction (if -1, latest)
     shuffle              : int          # Shuffle (1) or not (0)
     trainingsetindex     : int          # Index of training fraction list in config.yaml
-    unique index (task, date, iteration, shuffle, snapshotindex, trainingsetindex)
     scorer               : varchar(64)  # Scorer/network name - DLC's GetScorerName()
     config_template      : longblob     # Dictionary of the config for analyze_videos()
     project_path         : varchar(255) # DLC's project_path in config relative to root
@@ -357,6 +356,21 @@ class Model(dj.Manual):
 
     @classmethod
     def insert_new_model(
+        cls,
+        model_name: str,
+        experimenter_name: str,
+        video_file_keys: list,
+    ):
+        raise NotImplemented
+        import deeplabcut as dlc
+        root_dit = get_dlc_root_model_dir()
+        config_file = dlc.create_new_project(model_name, experimenter_name)
+    
+    def extract_frames(self):
+        raise NotImplemented
+    
+    @classmethod
+    def insert_trained_model(
         cls,
         model_name: str,
         dlc_config,

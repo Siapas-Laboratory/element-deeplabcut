@@ -22,6 +22,7 @@ class PoseEstimation:
         h5_path: str = None,
         yml_path: str = None,
         filename_prefix: str = "",
+        filtered: bool = False
     ):
         if dlc_dir is None:
             assert pkl_path and h5_path and yml_path, (
@@ -50,7 +51,10 @@ class PoseEstimation:
 
         # data file: h5 - body part outputs from the DLC post estimation step
         if h5_path is None:
-            self.h5_paths = sorted(self.dlc_dir.rglob(f"{filename_prefix}*.h5"))
+            if not filtered:
+                self.h5_paths = sorted([i for i in self.dlc_dir.rglob('*.h5') if i.stem.split('_')[-1]!='filtered'])
+            else:
+                self.h5_paths = sorted([i for i in self.dlc_dir.rglob('*.h5') if i.stem.split('_')[-1]=='filtered'])
             if not len(self.h5_paths) > 0:
                 raise FileNotFoundError(
                     f"No DLC output file (.h5) found in: {self.dlc_dir}"
@@ -66,9 +70,14 @@ class PoseEstimation:
             self.pkl_paths
         ), f"Unequal number of .h5 files ({len(self.h5_paths)}) and .pickle files ({len(self.pkl_paths)})"
 
-        assert (
-            self.pkl_paths[0].stem == self.h5_paths[0].stem + "_meta"
-        ), f"Mismatching h5 ({self.h5_paths[0].stem}) and pickle {self.pkl_paths[0].stem}"
+        if self.h5_paths[0].stem.split('_')[-1] == 'filtered':
+            assert (
+                self.pkl_paths[0].stem == '_'.join(self.h5_paths[0].stem.split('_')[:-1]) + "_meta"
+            ), f"Mismatching h5 ({self.h5_paths[0].stem}) and pickle {self.pkl_paths[0].stem}"
+        else:
+            assert (
+                self.pkl_paths[0].stem == self.h5_paths[0].stem + "_meta"
+            ), f"Mismatching h5 ({self.h5_paths[0].stem}) and pickle {self.pkl_paths[0].stem}"
 
         # config file: yaml - configuration for invoking the DLC post estimation step
         if yml_path is None:
