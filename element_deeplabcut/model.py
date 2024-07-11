@@ -19,6 +19,7 @@ from datetime import datetime
 from element_interface.utils import find_full_path, find_root_directory
 from .readers import dlc_reader
 import shutil
+import hashlib
 
 schema = dj.schema()
 _linking_module = None
@@ -286,6 +287,32 @@ class BodyPart(dj.Lookup):
                 ]
             )
 
+@schema
+class BodyPartSet(dj.Lookup):
+    definition = """
+    bp_set_hash     : varchar(255)  # hash for the set of body parts
+    """
+
+    class BodyPart(dj.Part):
+        definition = """
+        -> master
+        -> BodyPart
+        """
+
+    @classmethod
+    def get_bp_set(cls, body_parts):
+        group_str = '_'.join(sorted(body_parts))
+        group_hash = hashlib.sha256(group_str.encode()).hexdigest()
+        ins_tuple = {'bp_set_hash': group_hash}
+        cls.insert1(ins_tuple, skip_duplicates=True)
+        for bp in body_parts:
+            _ins_tuple = {
+                **ins_tuple,
+                'body_part': bp
+            }
+            cls.BodyPart.insert1(_ins_tuple, 
+                                skip_duplicates=True)
+        return ins_tuple
 
 @schema
 class Model(dj.Manual):
@@ -326,21 +353,10 @@ class Model(dj.Manual):
     project_path         : varchar(255) # DLC's project_path in config relative to root
     model_prefix=''      : varchar(32)
     model_description='' : varchar(300)
+    -> BodyPartSet
     -> [nullable] train.TrainingParamSet
     """
     # project_path is the only item required downstream in the pose schema
-
-    class BodyPart(dj.Part):
-        """Body parts associated with a given model
-
-        Attributes:
-            body_part ( varchar(32) ): Short name. Also called joint.
-            body_part_description ( varchar(1000) ): Optional. Longer description."""
-
-        definition = """
-        -> master
-        -> BodyPart
-        """
 
     def delete(self, **kwargs):
         root_dir = Path(get_dlc_root_model_dir())
@@ -503,11 +519,11 @@ class Model(dj.Manual):
             return
 
         def _do_insert():
-            cls.insert1(model_dict)
             # Returns array, so check size for unambiguous truth value
             if BodyPart.extract_new_body_parts(dlc_config, verbose=False).size > 0:
                 BodyPart.insert_from_config(dlc_config, prompt=prompt)
-            cls.BodyPart.insert((model_name, version, bp) for bp in dlc_config["bodyparts"])
+            model_dict['bp_set_hash'] = BodyPartSet.get_bp_set(dlc_config['bodyparts'])['bp_set_hash']
+            cls.insert1(model_dict)
 
         # ____ Insert into table ----
         if cls.connection.in_transaction:
