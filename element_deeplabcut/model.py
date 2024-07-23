@@ -353,6 +353,7 @@ class Model(dj.Manual):
     project_path         : varchar(255) # DLC's project_path in config relative to root
     model_prefix=''      : varchar(32)
     model_description='' : varchar(300)
+    orig_proj_path       : varchar(255) # original project path before copying
     -> BodyPartSet
     -> [nullable] train.TrainingParamSet
     """
@@ -416,14 +417,13 @@ class Model(dj.Manual):
         from deeplabcut.utils.auxiliaryfunctions import GetScorerName, write_config  # isort:skip
 
         assert Path(dlc_config).suffix in (".yml", ".yaml"), "Config file was expexted to be a yaml file"
-
+        
         # copy frozen model directory to database managed directory
         root_dir = get_dlc_root_model_dir()
         project_path = Path(root_dir)/model_name
-        version = 0
-        while project_path.exists():
-            version += 1
-            project_path = Path(root_dir)/f"{model_name}_v{version}"
+        version = len(cls & f'model_name="{model_name}"')
+        project_path = Path(root_dir)/f"{model_name}_v{version}"
+        orig_proj_path = Path(dlc_config).parent.as_posix()
         os.mkdir(project_path)
 
         yaml = YAML(typ="safe", pure=True)
@@ -498,6 +498,7 @@ class Model(dj.Manual):
             "project_path": project_path.relative_to(root_dir).as_posix(),
             "paramset_idx": paramset_idx,
             "config_template": dlc_config,
+            "orig_proj_path": orig_proj_path
         }
 
         # -- prompt for confirmation --
