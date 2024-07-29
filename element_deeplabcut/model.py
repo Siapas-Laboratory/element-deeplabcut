@@ -687,6 +687,7 @@ class PoseEstimationTask(dj.Manual):
         *,
         task_mode: str = None,
         analyze_videos_params: dict = None,
+        skip_duplicates: bool = False
     ):
         """Insert PoseEstimationTask in inferred output dir.
 
@@ -723,7 +724,7 @@ class PoseEstimationTask(dj.Manual):
                 "task_mode": task_mode,
                 "pose_estimation_params": analyze_videos_params,
                 "pose_estimation_output_dir": output_dir.as_posix(),
-            }
+            }, skip_duplicates = skip_duplicates
         )
 
     insert_estimation_task = generate
