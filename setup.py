@@ -24,7 +24,7 @@ setup(
     packages=find_packages(exclude=["contrib", "docs", "tests*"]),
     scripts=[],
     install_requires=[
-        "datajoint>=0.13.0",
+        "datajoint @ git+https://github.com/Siapas-Laboratory/datajoint-python.git",
         "graphviz",
         "pydot",
         "ipykernel",
