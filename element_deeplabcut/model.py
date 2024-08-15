@@ -428,17 +428,22 @@ class Model(dj.Manual):
 
         yaml = YAML(typ="safe", pure=True)
         with open(dlc_config, "rb") as f:
-            it = yaml.load(f)['iteration']
+            dlc_config = yaml.load(f)
+        if isinstance(params, dict):
+            dlc_config.update(params)
+            
+        engine = dlc_config.get('engine', 'tensorflow')
+        model_dir = 'dlc-models' if engine=='tensorflow' else 'dlc-models-pytorch'
 
         for i in Path(dlc_config).parent.iterdir():
             print(f'copying {i}')
             if i.is_dir():
-                if i.name in ['dlc-models', 'training-datasets']:
+                if i.name in [model_dir, 'training-datasets', 'evaluation-results']:
                     os.mkdir(project_path/i.name)
-                    it_dir = f'iteration-{it}'
+                    it_dir = f'iteration-{dlc_config["iteration"]}'
                     if it_dir in [j.name for j in i.iterdir()]:
                         shutil.copytree(i/it_dir, project_path/i.name/it_dir, symlinks=True)
-                else:
+                elif i.name == 'labeled-data':
                     shutil.copytree(i, project_path/i.name, symlinks=True)
             elif i.is_file():
                 shutil.copyfile(i, project_path/i.name)
@@ -447,13 +452,6 @@ class Model(dj.Manual):
         assert dlc_config_fp.exists(), (
             "dlc_config is not a filepath" + f"\n Check: {dlc_config_fp}"
         )
-
-        # handle dlc_config being a yaml file
-        yaml = YAML(typ="safe", pure=True)
-        with open(dlc_config_fp, "rb") as f:
-            dlc_config = yaml.load(f)
-        if isinstance(params, dict):
-            dlc_config.update(params)
 
         # ---- Get and resolve project path ----
         dlc_config["project_path"] = project_path.as_posix()  # update if different
