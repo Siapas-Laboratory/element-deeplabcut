@@ -285,6 +285,7 @@ class ModelTraining(dj.Computed):
             shuffle=dlc_config["shuffle"],
             cfg=dlc_config,
             modelprefix=dlc_config["modelprefix"],
+            engine=dlc_config.get("engine", "tensorflow")
         )
         model_train_folder = project_path / model_folder / "train"
 

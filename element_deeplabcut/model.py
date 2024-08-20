@@ -421,8 +421,13 @@ class Model(dj.Manual):
         # copy frozen model directory to database managed directory
         root_dir = get_dlc_root_model_dir()
         project_path = Path(root_dir)/model_name
-        version = len(cls & f'model_name="{model_name}"')
+        versions = (cls & f'model_name="{model_name}"').fetch('version')
+        if versions.size>0:
+            version = versions.max()
+        else:
+            version = 0
         project_path = Path(root_dir)/f"{model_name}_v{version}"
+        assert not project_path.exists()
         orig_proj_path = Path(dlc_config).parent.as_posix()
         os.mkdir(project_path)
 
