@@ -334,7 +334,7 @@ def do_pose_estimation(
             resulting in constant memory footprint.
 
     """
-    from deeplabcut.pose_estimation_tensorflow import analyze_videos
+    from deeplabcut import analyze_videos
 
     # ---- Build and save DLC configuration (yaml) file ----
     dlc_config = dlc_model["config_template"]
