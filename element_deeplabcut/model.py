@@ -310,7 +310,7 @@ class BodyPartSet(dj.Lookup):
                 **ins_tuple,
                 'body_part': bp
             }
-            cls.BodyPart.insert1(_ins_tuple, 
+            cls.Part.insert1(_ins_tuple, 
                                 skip_duplicates=True)
         return ins_tuple
 
