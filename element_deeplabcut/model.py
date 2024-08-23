@@ -293,7 +293,7 @@ class BodyPartSet(dj.Lookup):
     bp_set_hash     : varchar(255)  # hash for the set of body parts
     """
 
-    class BodyPart(dj.Part):
+    class Part(dj.Part):
         definition = """
         -> master
         -> BodyPart
