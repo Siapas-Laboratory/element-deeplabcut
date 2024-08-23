@@ -416,7 +416,7 @@ class Model(dj.Manual):
 
         from deeplabcut.utils.auxiliaryfunctions import GetScorerName, write_config  # isort:skip
 
-        assert Path(dlc_config).suffix in (".yml", ".yaml"), "Config file was expexted to be a yaml file"
+        assert Path(dlc_config).name=='config.yaml', f"expected argument dlc_config to be a path to a config.yaml file but got '{Path(dlc_config).name}' instead"
         
         # copy frozen model directory to database managed directory
         root_dir = get_dlc_root_model_dir()
@@ -440,7 +440,7 @@ class Model(dj.Manual):
         engine = dlc_config.get('engine', 'tensorflow')
         model_dir = 'dlc-models' if engine=='tensorflow' else 'dlc-models-pytorch'
 
-        for i in Path(dlc_config).parent.iterdir():
+        for i in Path(orig_proj_path).iterdir():
             print(f'copying {i}')
             if i.is_dir():
                 if i.name in [model_dir, 'training-datasets', 'evaluation-results']:
@@ -453,7 +453,7 @@ class Model(dj.Manual):
             elif i.is_file():
                 shutil.copyfile(i, project_path/i.name)
         
-        dlc_config_fp = project_path/Path(dlc_config).name
+        dlc_config_fp = project_path/'config.yaml'
         assert dlc_config_fp.exists(), (
             "dlc_config is not a filepath" + f"\n Check: {dlc_config_fp}"
         )
