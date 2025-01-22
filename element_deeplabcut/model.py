@@ -423,7 +423,7 @@ class Model(dj.Manual):
         project_path = Path(root_dir)/model_name
         versions = (cls & f'model_name="{model_name}"').fetch('version')
         if versions.size>0:
-            version = versions.max()
+            version = versions.max() + 1
         else:
             version = 0
         project_path = Path(root_dir)/f"{model_name}_v{version}"
