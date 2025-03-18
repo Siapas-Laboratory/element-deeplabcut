@@ -75,20 +75,28 @@ def activate(
 
 # -------------- Functions required by element-deeplabcut ---------------
 
-def get_dlc_processed_data_dir() -> Optional[str]:
+def get_dlc_processed_data_dir(key:dict) -> Optional[str]:
     """Pulls relevant func from parent namespace. Defaults to DLC's project /videos/.
 
     Method in parent namespace should provide a string to a directory where DLC output
-    files will be stored. If unspecified, output files will be stored in the
+    files will be stored for a given key in the PoseEstimationTask table. 
+    If unspecified, output files will be stored in the
     session directory 'videos' folder, per DeepLabCut default.
     """
     if hasattr(_linking_module, "get_dlc_processed_data_dir"):
-        return _linking_module.get_dlc_processed_data_dir()
+        return _linking_module.get_dlc_processed_data_dir(key)
     else:
         return None
 
 def get_dlc_root_model_dir() -> str:
     return _linking_module.get_dlc_root_model_dir()
+
+def get_storage_drive() -> dict:
+    return _linking_module.get_storage_drive()
+
+def get_drive_path(drive_key:dict) -> str:
+    return _linking_module.get_drive_path(drive_key)
+
 # ----------------------------- Table declarations ----------------------
 
 @schema
@@ -225,19 +233,9 @@ class BodyPart(dj.Lookup):
         """Returns list of body parts present in dlc config, but not BodyPart table.
 
         Args:
-            dlc_config ( varchar(255) ): Path to a config.y*ml.
+            dlc_config ( varchar(255) ): dict of dlc config
             verbose (bool): Default True. Print both existing and new items to console.
         """
-        if not isinstance(dlc_config, dict):
-            dlc_config_fp = find_full_path(get_dlc_root_model_dir(), Path(dlc_config))
-            assert dlc_config_fp.exists() and dlc_config_fp.suffix in (
-                ".yml",
-                ".yaml",
-            ), f"dlc_config is neither dict nor filepath\n Check: {dlc_config_fp}"
-            if dlc_config_fp.suffix in (".yml", ".yaml"):
-                yaml = YAML(typ="safe", pure=True)
-                with open(dlc_config_fp, "rb") as f:
-                    dlc_config = yaml.load(f)
         # -- Check and insert new BodyPart --
         assert "bodyparts" in dlc_config, f"Found no bodyparts section in {dlc_config}"
         tracked_body_parts = cls.fetch("body_part")
@@ -254,7 +252,7 @@ class BodyPart(dj.Lookup):
         """Insert all body parts from a config file.
 
         Args:
-            dlc_config ( varchar(255) ): Path to a config.y*ml.
+            dlc_config ( varchar(255) ): dict of dlc config
             descriptions (list): Optional. List of strings describing new body parts.
             prompt (bool): Optional, default True. Prompt for confirmation before insert.
         """
@@ -353,16 +351,17 @@ class Model(dj.Manual):
     project_path         : varchar(255) # DLC's project_path in config relative to root
     model_prefix=''      : varchar(32)
     model_description='' : varchar(300)
-    orig_proj_path       : varchar(255) # original project path before copying
+    -> [nullable] Drive
     -> BodyPartSet
     -> [nullable] train.TrainingParamSet
     """
     # project_path is the only item required downstream in the pose schema
 
     def delete(self, **kwargs):
-        root_dir = Path(get_dlc_root_model_dir())
-        for model_name, v, path in zip(*self.fetch('model_name', 'version', 'project_path')):
-            full_path = root_dir/path
+        keys = self.fetch('KEY')
+        for key in keys:
+            model_name, v = (self & key).fetch1('model_name', 'version')
+            full_path = (self & key).get_project_path()
             reply = input(f"Are you sure you want to delete {model_name} version {v} at {full_path.as_posix()}? [y/n]: ")
             if reply.lower()[0] == 'y':
                 row = Model & {'model_name': model_name, 'version': v}
@@ -379,17 +378,22 @@ class Model(dj.Manual):
         video_file_keys: list,
     ):
         raise NotImplemented
-        import deeplabcut as dlc
-        root_dit = get_dlc_root_model_dir()
-        config_file = dlc.create_new_project(model_name, experimenter_name)
-    
+   
     def extract_frames(self):
         raise NotImplemented
+
+    def get_project_path(self):
+        if len(_linking_module.Drive & self)>0:
+            drive_path = get_drive_path((_linking_module.Drive & self).fetch1('KEY'))
+        else:
+            drive_path = '/'
+        return find_full_path(drive_path, self.fetch1('project_path'))
     
     @classmethod
     def insert_trained_model(
         cls,
         model_name: str,
+        drive_key: dict,
         dlc_config,
         *,
         shuffle: int,
@@ -404,7 +408,8 @@ class Model(dj.Manual):
 
         Args:
             model_name (str): User-friendly name for this model.
-            dlc_config ( varchar(255) ): Path to a config.y*ml.
+            drive_key (dict): key to Drive for the drive where the model config is currently stored
+            dlc_config ( varchar(255) ): Path to a config.y*ml relative to the drive path.
             shuffle (int): Which shuffle of the training dataset.
             trainingsetindex (int): Index of training fraction list in config.yaml.
             model_description (str): Optional. Description of this model.
@@ -418,9 +423,23 @@ class Model(dj.Manual):
 
         assert Path(dlc_config).name=='config.yaml', f"expected argument dlc_config to be a path to a config.yaml file but got '{Path(dlc_config).name}' instead"
         
+        orig_drive_key = drive_key
+        dlc_config = Path(dlc_config).as_posix()
+        dlc_config = dlc_config[1:] if dlc_config[0] == '/' else dlc_config
+        dlc_config = os.path.join(get_drive_path(orig_drive_key), dlc_config)
+        orig_proj_path = Path(dlc_config).parent.as_posix()
+
+        yaml = YAML(typ="safe", pure=True)
+        with open(dlc_config, "rb") as f:
+            dlc_config = yaml.load(f)
+        if isinstance(params, dict):
+            dlc_config.update(params)
+
         # copy frozen model directory to database managed directory
+        drive_key = get_storage_drive()
+        drive_path = get_drive_path(drive_key)
         root_dir = get_dlc_root_model_dir()
-        project_path = Path(root_dir)/model_name
+        project_path = Path(drive_path)/Path(root_dir)/model_name
         versions = (cls & f'model_name="{model_name}"').fetch('version')
         if versions.size>0:
             version = versions.max() + 1
@@ -428,14 +447,7 @@ class Model(dj.Manual):
             version = 0
         project_path = Path(root_dir)/f"{model_name}_v{version}"
         assert not project_path.exists()
-        orig_proj_path = Path(dlc_config).parent.as_posix()
         os.mkdir(project_path)
-
-        yaml = YAML(typ="safe", pure=True)
-        with open(dlc_config, "rb") as f:
-            dlc_config = yaml.load(f)
-        if isinstance(params, dict):
-            dlc_config.update(params)
             
         engine = dlc_config.get('engine', 'tensorflow')
         model_dir = 'dlc-models' if engine=='tensorflow' else 'dlc-models-pytorch'
@@ -498,10 +510,10 @@ class Model(dj.Manual):
             "snapshotindex": dlc_config["snapshotindex"],
             "shuffle": shuffle,
             "trainingsetindex": int(trainingsetindex),
-            "project_path": project_path.relative_to(root_dir).as_posix(),
+            "project_path": project_path.relative_to(drive_path).as_posix(),
             "paramset_idx": paramset_idx,
             "config_template": dlc_config,
-            "orig_proj_path": orig_proj_path
+            **drive_key
         }
 
         # -- prompt for confirmation --
@@ -536,8 +548,26 @@ class Model(dj.Manual):
             with cls.connection.transaction:
                 _do_insert()
 
+        model_key = {'model_name': model_name, 'version': version}
+        ModelOrigPath.insert1({**model_key
+                                    **orig_drive_key,
+                                    'orig_project_path': Path(orig_proj_path).relative_to(get_drive_path(orig_drive_key))})
         return {'model_name': model_name, 'version': version}
 
+@schema
+class ModelOrigPath(dj.Manual):
+    definition = """
+    -> model.Model
+    ---
+    project_path    :  varchar(255) # path relative to drive
+    -> [nullable] Drive
+    """
+    def get_project_path(self):
+        if len(_linking_module.Drive & self)>0:
+            drive_path = get_drive_path((_linking_module.Drive & self).fetch1('KEY'))
+        else:
+            drive_path = '/'
+        return find_full_path(drive_path, self.fetch1('project_path'))
 
 @schema
 class ModelEvaluation(dj.Computed):
@@ -570,17 +600,16 @@ class ModelEvaluation(dj.Computed):
         )  # isort:skip
 
         """.populate() method will launch evaluation for each unique entry in Model."""
-        dlc_config, project_path, model_prefix, shuffle, trainingsetindex = (
+        dlc_config, model_prefix, shuffle, trainingsetindex = (
             Model & key
         ).fetch1(
             "config_template",
-            "project_path",
             "model_prefix",
             "shuffle",
             "trainingsetindex",
         )
 
-        project_path = find_full_path(get_dlc_root_model_dir(), project_path)
+        project_path = (Model & key).get_project_path()
         yml_path, _ = dlc_reader.read_yaml(project_path)
 
         evaluate_network(
@@ -639,8 +668,16 @@ class PoseEstimationTask(dj.Manual):
     ---
     task_mode='load' : enum('load', 'trigger')  # load results or trigger computation
     pose_estimation_output_dir='': varchar(255) # output dir
+    -> [nullable] Drive
     pose_estimation_params=null  : longblob     # analyze_videos params, if not default
     """
+
+    def get_output_dir(self):
+        if len(_linking_module.Drive & self)>0:
+            drive_path = get_drive_path((_linking_module.Drive & self).fetch1('KEY'))
+        else:
+            drive_path = '/'
+        return find_full_path(drive_path, self.fetch1('pose_estimation_output_dir'))
 
     @classmethod
     def infer_output_dir(cls, key: dict, relative: bool = False, mkdir: bool = False):
@@ -662,9 +699,12 @@ class PoseEstimationTask(dj.Manual):
             for v in (_linking_module.Device & recording_key).fetch1("KEY").values()
         )
 
-        if get_dlc_processed_data_dir():
-            processed_dir = Path(get_dlc_processed_data_dir())
+        if get_dlc_processed_data_dir(key):
+            drive_key = get_storage_drive()
+            drive_path = get_drive_path(drive_key)
+            processed_dir = Path(os.path.join(drive_path, Path(get_dlc_processed_data_dir(key)).as_posix()))
         else:  # if processed not provided, default to where video is
+            drive_key, drive_path = {},''
             processed_dir = root_dir
 
         output_dir = (
@@ -679,7 +719,8 @@ class PoseEstimationTask(dj.Manual):
         )
         if mkdir:
             output_dir.mkdir(parents=True, exist_ok=True)
-        return output_dir.relative_to(processed_dir) if relative else output_dir
+        output_dir = output_dir.relative_to(processed_dir) if relative else output_dir
+        return output_dir, drive_key, drive_path
 
     @classmethod
     def generate(
@@ -705,7 +746,7 @@ class PoseEstimationTask(dj.Manual):
                 videotype, gputouse, save_as_csv, batchsize, cropping, TFGPUinference,
                 dynamic, robust_nframes, allow_growth, use_shelve
         """
-        output_dir = cls.infer_output_dir(
+        output_dir, drive_key, drive_path = cls.infer_output_dir(
             {**video_recording_key, "model_name": model_name, "version": version},
             relative=False,
             mkdir=True,
@@ -719,14 +760,17 @@ class PoseEstimationTask(dj.Manual):
             else:
                 task_mode = "load"
 
+        output_dir = output_dir.relative_to(drive_path).as_posix() if len(drive_path)>0 else output_dir.as_posix()
+
         cls.insert1(
             {
                 **video_recording_key,
+                **drive_key,
                 "model_name": model_name,
                 "version": version,
                 "task_mode": task_mode,
                 "pose_estimation_params": analyze_videos_params,
-                "pose_estimation_output_dir": output_dir.as_posix(),
+                "pose_estimation_output_dir": output_dir,
             }, skip_duplicates = skip_duplicates
         )
 
@@ -775,10 +819,8 @@ class PoseEstimation(dj.Computed):
         """.populate() method will launch training for each PoseEstimationTask"""
         # ID model and directories
         dlc_model = (Model & key).fetch1()
-        task_mode, output_dir = (PoseEstimationTask & key).fetch1(
-            "task_mode", "pose_estimation_output_dir"
-        )
-
+        task_mode = (PoseEstimationTask & key).fetch1("task_mode")
+        output_dir = (PoseEstimationTask & key).get_output_dir().as_posix()
 
         # Triger PoseEstimation
         if task_mode == "trigger":
@@ -786,9 +828,7 @@ class PoseEstimation(dj.Computed):
             # - project_path: full path to the directory containing the trained model
             # - video_filepaths: full paths to the video files for inference
             # - analyze_video_params: optional parameters to analyze video
-            project_path = find_full_path(
-                get_dlc_root_model_dir(), dlc_model["project_path"]
-            )
+            project_path = (Model & key).get_project_path()
             video_filepaths = [v.as_posix() for v in (VideoRecording & key).get_vid_paths()]
             analyze_video_params = (PoseEstimationTask & key).fetch1(
                 "pose_estimation_params"
