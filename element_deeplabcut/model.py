@@ -438,16 +438,17 @@ class Model(dj.Manual):
         # copy frozen model directory to database managed directory
         drive_key = get_storage_drive()
         drive_path = get_drive_path(drive_key)
-        root_dir = get_dlc_root_model_dir()
-        project_path = Path(drive_path)/Path(root_dir)/model_name
+        root_dir = Path(drive_path)/Path(get_dlc_root_model_dir())
+        project_path = root_dir/model_name
         versions = (cls & f'model_name="{model_name}"').fetch('version')
         if versions.size>0:
             version = versions.max() + 1
         else:
             version = 0
-        project_path = Path(root_dir)/f"{model_name}_v{version}"
+        project_path = root_dir/f"{model_name}_v{version}"
         assert not project_path.exists()
-        os.mkdir(project_path)
+        os.umask(0)
+        project_path.mkdir(mode=0o777, parents=True, exist_ok=True)
             
         engine = dlc_config.get('engine', 'tensorflow')
         model_dir = 'dlc-models' if engine=='tensorflow' else 'dlc-models-pytorch'
@@ -456,7 +457,7 @@ class Model(dj.Manual):
             print(f'copying {i}')
             if i.is_dir():
                 if i.name in [model_dir, 'training-datasets', 'evaluation-results']:
-                    os.mkdir(project_path/i.name)
+                    os.mkdir(project_path/i.name, mode=0o777)
                     it_dir = f'iteration-{dlc_config["iteration"]}'
                     if it_dir in [j.name for j in i.iterdir()]:
                         shutil.copytree(i/it_dir, project_path/i.name/it_dir, symlinks=True)
@@ -718,7 +719,8 @@ class PoseEstimationTask(dj.Manual):
             )
         )
         if mkdir:
-            output_dir.mkdir(parents=True, exist_ok=True)
+            os.umask(0)
+            output_dir.mkdir(mode=0o777, exist_ok=True, parents=True)
         output_dir = output_dir.relative_to(processed_dir) if relative else output_dir
         return output_dir, drive_key, drive_path
 
