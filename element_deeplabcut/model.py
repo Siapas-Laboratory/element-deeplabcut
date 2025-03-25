@@ -831,7 +831,7 @@ class PoseEstimation(dj.Computed):
             # - video_filepaths: full paths to the video files for inference
             # - analyze_video_params: optional parameters to analyze video
             project_path = (Model & key).get_project_path()
-            video_filepaths = [v.as_posix() for v in (VideoRecording & key).get_vid_paths()]
+            video_filepaths = (VideoRecording & key).get_vid_paths()
             analyze_video_params = (PoseEstimationTask & key).fetch1(
                 "pose_estimation_params"
             ) or {}
