@@ -674,7 +674,8 @@ class PoseEstimationTask(dj.Manual):
     """
 
     def get_output_dir(self):
-        if len(_linking_module.Drive & self)>0:
+        assert len(self) == 1
+        if len(_linking_module.Drive & self)==1:
             drive_path = get_drive_path((_linking_module.Drive & self).fetch1('KEY'))
         else:
             drive_path = '/'
