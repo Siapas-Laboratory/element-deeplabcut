@@ -52,9 +52,9 @@ class PoseEstimation:
         # data file: h5 - body part outputs from the DLC post estimation step
         if h5_path is None:
             if not filtered:
-                self.h5_paths = sorted([i for i in self.dlc_dir.rglob('*.h5') if i.stem.split('_')[-1]!='filtered'])
+                self.h5_paths = sorted([i for i in self.dlc_dir.rglob('*.h5') if (i.name[0]!='.') and (i.stem.split('_')[-1]!='filtered')])
             else:
-                self.h5_paths = sorted([i for i in self.dlc_dir.rglob('*.h5') if i.stem.split('_')[-1]=='filtered'])
+                self.h5_paths = sorted([i for i in self.dlc_dir.rglob('*.h5') if (i.name[0]!='.') and (i.stem.split('_')[-1]=='filtered')])
             if not len(self.h5_paths) > 0:
                 raise FileNotFoundError(
                     f"No DLC output file (.h5) found in: {self.dlc_dir}"
