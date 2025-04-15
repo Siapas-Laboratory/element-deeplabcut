@@ -37,7 +37,7 @@ class PoseEstimation:
         # meta file: pkl - info about this DLC run (input video, configuration, etc.)
         if pkl_path is None:
             self.pkl_paths = sorted(
-                self.dlc_dir.rglob(f"{filename_prefix}*meta.pickle")
+                [i for i in self.dlc_dir.rglob(f"{filename_prefix}*meta.pickle") if i.name[0]!='.']
             )
             if not len(self.pkl_paths) > 0:
                 raise FileNotFoundError(
