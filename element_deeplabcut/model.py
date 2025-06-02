@@ -552,7 +552,7 @@ class Model(dj.Manual):
         model_key = {'model_name': model_name, 'version': version}
         ModelOrigPath.insert1({**model_key,
                                 **orig_drive_key,
-                                'orig_project_path': Path(orig_proj_path).relative_to(get_drive_path(orig_drive_key))})
+                                'project_path': Path(orig_proj_path).relative_to(get_drive_path(orig_drive_key))})
         return {'model_name': model_name, 'version': version}
 
 @schema
