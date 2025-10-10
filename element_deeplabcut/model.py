@@ -403,6 +403,7 @@ class Model(dj.Manual):
         paramset_idx: int = None,
         prompt=True,
         params=None,
+        symlinks=True
     ):
         """Insert new model into the dlc.Model table.
 
@@ -423,57 +424,17 @@ class Model(dj.Manual):
 
         assert Path(dlc_config).name=='config.yaml', f"expected argument dlc_config to be a path to a config.yaml file but got '{Path(dlc_config).name}' instead"
         
+        # get full path to project
         orig_drive_key = drive_key
-        dlc_config = Path(dlc_config).as_posix()
-        dlc_config = dlc_config[1:] if dlc_config[0] == '/' else dlc_config
-        dlc_config = os.path.join(get_drive_path(orig_drive_key), dlc_config)
-        orig_proj_path = Path(dlc_config).parent.as_posix()
+        dlc_config = os.path.join(get_drive_path(orig_drive_key), dlc_config.lstrip('/'))
+        orig_proj_path = Path(dlc_config).parent
 
+        # load the config
         yaml = YAML(typ="safe", pure=True)
-        with open(dlc_config, "rb") as f:
+        with open(dlc_config, "r") as f:
             dlc_config = yaml.load(f)
         if isinstance(params, dict):
             dlc_config.update(params)
-
-        # copy frozen model directory to database managed directory
-        drive_key = get_storage_drive()
-        drive_path = get_drive_path(drive_key)
-        root_dir = Path(drive_path)/Path(get_dlc_root_model_dir())
-        project_path = root_dir/model_name
-        versions = (cls & f'model_name="{model_name}"').fetch('version')
-        if versions.size>0:
-            version = versions.max() + 1
-        else:
-            version = 0
-        project_path = root_dir/f"{model_name}_v{version}"
-        assert not project_path.exists()
-        os.umask(0)
-        project_path.mkdir(mode=0o777, parents=True, exist_ok=True)
-            
-        engine = dlc_config.get('engine', 'tensorflow')
-        model_dir = 'dlc-models' if engine=='tensorflow' else 'dlc-models-pytorch'
-
-        for i in Path(orig_proj_path).iterdir():
-            print(f'copying {i}')
-            if i.is_dir():
-                if i.name in [model_dir, 'training-datasets', 'evaluation-results']:
-                    os.mkdir(project_path/i.name, mode=0o777)
-                    it_dir = f'iteration-{dlc_config["iteration"]}'
-                    if it_dir in [j.name for j in i.iterdir()]:
-                        shutil.copytree(i/it_dir, project_path/i.name/it_dir, symlinks=True)
-                elif i.name == 'labeled-data':
-                    shutil.copytree(i, project_path/i.name, symlinks=True)
-            elif i.is_file():
-                shutil.copyfile(i, project_path/i.name)
-        
-        dlc_config_fp = project_path/'config.yaml'
-        assert dlc_config_fp.exists(), (
-            "dlc_config is not a filepath" + f"\n Check: {dlc_config_fp}"
-        )
-
-        # ---- Get and resolve project path ----
-        dlc_config["project_path"] = project_path.as_posix()  # update if different
-        write_config(dlc_config_fp.as_posix(), dlc_config)
 
         # ---- Verify config ----
         needed_attributes = [
@@ -498,6 +459,31 @@ class Model(dj.Manual):
         )[scorer_legacy]
         if dlc_config["snapshotindex"] == -1:
             dlc_scorer = "".join(dlc_scorer.split("_")[:-1])
+
+        # get path to the db managed folder we will copy the project to
+        drive_key = get_storage_drive()
+        drive_path = get_drive_path(drive_key)
+        root_dir = Path(drive_path)/get_dlc_root_model_dir()
+        
+        # infer version number of this model given the name
+        versions = (cls & f'model_name="{model_name}"').fetch('version')
+        if versions.size>0:
+            version = versions.max() + 1
+        else:
+            version = 0
+        
+        # construct full path to db managed project directory a
+        project_path = root_dir/f"{model_name}_v{version}"
+        if project_path.exists():
+            q = f"This model is version {version} in the database but a directory already exists at {project_path.as_posix()}. Would you like to delete it?"
+            if dj.utils.user_choice(q) == "yes":
+                try:
+                    shutil.rmtree(project_path)
+                    assert not project_path.exists()
+                except Exception as e:
+                    raise RuntimeError(f"Could not delete existing directory {project_path}: {e}")
+            else:
+                return        
 
         # ---- Insert ----
         model_dict = {
@@ -536,11 +522,41 @@ class Model(dj.Manual):
             return
 
         def _do_insert():
-            # Returns array, so check size for unambiguous truth value
-            if BodyPart.extract_new_body_parts(dlc_config, verbose=False).size > 0:
-                BodyPart.insert_from_config(dlc_config, prompt=prompt)
-            model_dict['bp_set_hash'] = BodyPartSet.get_bp_set(dlc_config['bodyparts'])['bp_set_hash']
-            cls.insert1(model_dict)
+            try:
+                # create the new project directory
+                os.umask(0)
+                project_path.mkdir(mode=0o777, parents=True, exist_ok=True)
+                # update project path in config and save in new directory
+                dlc_config["project_path"] = project_path.as_posix()  # update if different
+                write_config((project_path/'config.yaml').as_posix(), dlc_config)
+                # get the model directory depending on the backend
+                engine = dlc_config.get('engine', 'tensorflow')
+                model_dir = 'dlc-models' if engine=='tensorflow' else 'dlc-models-pytorch'
+                # get the directory name associated to the relevant iteration
+                it_dir = f'iteration-{dlc_config["iteration"]}'
+                # copy over contents of project directory
+                for i in [model_dir, 'training-datasets', 'evaluation-results']:
+                    if (orig_proj_path/i/it_dir).exists():
+                        print(f'copying {i}')
+                        (project_path/i).mkdir(exist_ok=True, parents=True, mode=0o777)
+                        shutil.copytree(orig_proj_path/i/it_dir, 
+                                        project_path/i/it_dir, 
+                                        symlinks=symlinks)
+                shutil.copytree(orig_proj_path/'labeled-data', 
+                                project_path/'labeled-data', 
+                                symlinks=symlinks)
+
+                # Returns array, so check size for unambiguous truth value
+                if BodyPart.extract_new_body_parts(dlc_config, verbose=False).size > 0:
+                    BodyPart.insert_from_config(dlc_config, prompt=prompt)
+                model_dict['bp_set_hash'] = BodyPartSet.get_bp_set(dlc_config['bodyparts'])['bp_set_hash']
+                cls.insert1(model_dict)
+            except Exception as e:
+                try:
+                    shutil.rmtree(project_path)
+                except Exception as e2:
+                    raise RuntimeError(f"Failed inserting model and cleanup also failed: {e2}") from e
+                raise
 
         # ____ Insert into table ----
         if cls.connection.in_transaction:
@@ -552,7 +568,7 @@ class Model(dj.Manual):
         model_key = {'model_name': model_name, 'version': version}
         ModelOrigPath.insert1({**model_key,
                                 **orig_drive_key,
-                                'project_path': Path(orig_proj_path).relative_to(get_drive_path(orig_drive_key))})
+                                'project_path': orig_proj_path.relative_to(get_drive_path(orig_drive_key))})
         return {'model_name': model_name, 'version': version}
 
 @schema
