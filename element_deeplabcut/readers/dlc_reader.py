@@ -104,7 +104,7 @@ class PoseEstimation:
             (np.array(self.yml["TrainingFraction"]) * 100).astype(int)
             == int(self.pkl["training set fraction"] * 100)
         )[0][0]
-        train_iter = int(self.pkl["Scorer"].split("_")[-1])
+        train_iter = int(self.pkl["Scorer"].split("_")[-1].split('-')[-1])
 
         self.model = {
             "Scorer": self.pkl["Scorer"],
@@ -273,6 +273,7 @@ def do_pose_estimation(
     robust_nframes=False,
     allow_growth=False,
     use_shelve=False,
+    **torch_kwargs
 ):
     """Launch DLC's analyze_videos within element-deeplabcut.
 
@@ -383,4 +384,5 @@ def do_pose_estimation(
         robust_nframes=robust_nframes,
         allow_growth=allow_growth,
         use_shelve=use_shelve,
+        **torch_kwargs
     )
