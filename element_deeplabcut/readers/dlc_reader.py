@@ -8,6 +8,12 @@ from ruamel.yaml import YAML
 from element_interface.utils import find_root_directory, dict_to_uuid
 from .. import model
 from datajoint.errors import DataJointError
+import cv2 as cv
+from tqdm import tqdm
+import math
+from pathlib import Path
+import torch
+
 
 logger = logging.getLogger("datajoint")
 
@@ -309,8 +315,9 @@ def do_pose_estimation(
             boosts out-of-domain robustness for pose estimation" by Alexander Mathis,
             Mert Yüksekgönül, Byron Rogers, Matthias Bethge, Mackenzie W. Mathis.
             Source https://arxiv.org/abs/1909.11229
-        dynamic (tuple(bool, float, int) triple (state, detectiontreshold, margin)):
-            If the state is true, then dynamic cropping will be performed. That means
+        dynamic (tuple(bool, float, int) triple (state, detectiontreshold, margin) if batchsize=1 else (state, detectionthreshold, cropsize)):
+            If the state is true, then dynamic cropping will be performed. If batchsize=1
+            the standard machinery in deeplabcut is used  That means
             that if an object is detected (i.e. any body part > detectiontreshold),
             then object boundaries are computed according to the smallest/largest x
             position and smallest/largest y position of all body parts. This  window is
@@ -318,7 +325,9 @@ def do_pose_estimation(
             is analyzed (until the object is lost, i.e. <detectiontreshold). The
             current position is utilized for updating the crop window for the next
             frame (this is why the margin is important and should be set large enough
-            given the movement of the animal).
+            given the movement of the animal). If batchsize>1, batched dynamic cropping is performed
+            where the crop for the next batch is determined by the centroid of the predictions from the last frame of the
+            previous batch. a fixed square crop window of side length crop_size is used.
         robust_nframes (bool, optional, default=False):
             Evaluate a video's number of frames in a robust manner.
             This option is slower (as the whole video is read frame-by-frame),
@@ -366,23 +375,47 @@ def do_pose_estimation(
     if dlc_project_path != output_dir:
         config_filepath = save_yaml(dlc_project_path, dlc_config)
 
-    # ---- Trigger DLC prediction job ----
-    analyze_videos(
-        config=config_filepath,
-        videos=video_filepaths,
-        shuffle=dlc_model["shuffle"],
-        trainingsetindex=dlc_model["trainingsetindex"],
-        destfolder=output_dir,
-        modelprefix=dlc_model["model_prefix"],
-        videotype=videotype,
-        gputouse=gputouse,
-        save_as_csv=save_as_csv,
-        batchsize=batchsize,
-        cropping=cropping,
-        TFGPUinference=TFGPUinference,
-        dynamic=dynamic,
-        robust_nframes=robust_nframes,
-        allow_growth=allow_growth,
-        use_shelve=use_shelve,
-        **torch_kwargs
-    )
+    engine = dlc_config.get("engine", "tensorflow")
+    if (
+        engine == "pytorch"
+        and dynamic[0]  # dynamic[0] is the "enabled" bool
+        and batchsize
+        and batchsize > 1
+    ):
+        print('WARNING: dynamic cropping specified with batchsize>1 using PyTorch...running custom batched dynamic cropping')
+        from ..inference.batched_dynamic_cropping import run_batch_dynamic_cropping
+        for vid in video_filepaths:
+            run_batch_dynamic_cropping(
+                vid, dlc_config, 
+                shuffle =dlc_model["shuffle"],
+                trainingsetindex=dlc_model["trainingsetindex"],
+                snapshotindex=dlc_model["snapshotindex"],
+                destfolder=output_dir,
+                batchsize=batchsize,
+                save_as_csv = save_as_csv,
+                conf_thresh = dynamic[1],
+                crop_size = dynamic[2],
+                low_conf_frac_thresh = dynamic[3]
+            )
+    else:
+        # ---- Trigger DLC prediction job ----
+        analyze_videos(
+            config=config_filepath,
+            videos=video_filepaths,
+            shuffle=dlc_model["shuffle"],
+            trainingsetindex=dlc_model["trainingsetindex"],
+            destfolder=output_dir,
+            modelprefix=dlc_model["model_prefix"],
+            videotype=videotype,
+            gputouse=gputouse,
+            save_as_csv=save_as_csv,
+            batchsize=batchsize,
+            cropping=cropping,
+            TFGPUinference=TFGPUinference,
+            dynamic=dynamic,
+            robust_nframes=robust_nframes,
+            allow_growth=allow_growth,
+            use_shelve=use_shelve,
+            **torch_kwargs
+        )
+

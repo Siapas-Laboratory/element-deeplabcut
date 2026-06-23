@@ -486,6 +486,7 @@ class Model(dj.Manual):
                 return        
 
         # ---- Insert ----
+        dlc_config["project_path"] = project_path.as_posix() 
         model_dict = {
             "model_name": model_name,
             "version": version,
@@ -527,7 +528,6 @@ class Model(dj.Manual):
                 os.umask(0)
                 project_path.mkdir(mode=0o777, parents=True, exist_ok=True)
                 # update project path in config and save in new directory
-                dlc_config["project_path"] = project_path.as_posix()  # update if different
                 write_config((project_path/'config.yaml').as_posix(), dlc_config)
                 # get the model directory depending on the backend
                 engine = dlc_config.get('engine', 'tensorflow')
